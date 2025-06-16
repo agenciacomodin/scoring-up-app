@@ -1,3 +1,4 @@
+// functions/index.js
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const { OpenAI } = require("openai");
@@ -32,8 +33,9 @@ const PROMPT_MAGICO = `
     - tipoDeudaPrincipal: Clasifica la deuda principal como 'bancaria' (si es de un banco), 'no_bancaria' (servicios, etc), 'prescripta' (si tiene más de 5 años), o 'ninguna'.
 `;
 
-// ** LÍNEA MODIFICADA: Cambiamos el nombre de la función **
-exports.procesarInformePDF = functions.storage.onObjectFinalized(async (object) => {
+// ** LÍNEA CORREGIDA **
+// Usamos la nueva sintaxis 'onObjectFinalized' para Cloud Functions v2
+exports.analizarInformeConIA = functions.storage.onObjectFinalized(async (object) => {
     const filePath = object.name; 
     if (!filePath.startsWith("informes-pendientes/")) {
         return null;

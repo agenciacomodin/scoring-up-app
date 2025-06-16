@@ -1,26 +1,24 @@
-// src/components/ResumenCrediticio.js
 "use client";
-
+import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
-// Componente interno para el medidor de "Volumen Crediticio"
 const MedidorCrediticio = ({ nivel }) => {
     let colorClase = 'bg-gray-600';
     let texto = 'No definido';
-    let angulo = '-rotate-90'; // Neutral (flecha a la izquierda por defecto)
+    let angulo = '-rotate-90';
 
     if (nivel === 'bajo') {
         colorClase = 'bg-orange-500';
         texto = 'Bajo';
-        angulo = '-rotate-135'; // Más a la izquierda
+        angulo = '-rotate-135';
     } else if (nivel === 'medio') {
         colorClase = 'bg-yellow-500';
         texto = 'Medio';
-        angulo = 'rotate-0'; // Hacia arriba
+        angulo = 'rotate-0';
     } else if (nivel === 'bueno') {
         colorClase = 'bg-green-500';
         texto = 'Bueno';
-        angulo = 'rotate-45'; // Hacia la derecha
+        angulo = 'rotate-45';
     }
 
     return (
@@ -36,7 +34,6 @@ const MedidorCrediticio = ({ nivel }) => {
     );
 };
 
-// Componente interno para el gráfico de deudas
 const GraficoDeudas = ({ data }) => (
     <div className="bg-gray-700 p-4 rounded-lg h-full">
          <h4 className="font-semibold text-center text-sm text-gray-400 mb-4">Composición de Deuda (Simulado)</h4>
@@ -56,19 +53,16 @@ const GraficoDeudas = ({ data }) => (
     </div>
 );
 
-// Componente principal que se exporta y se usará en la página de perfil
-export default function ResumenCrediticio({ solicitud }) {
-    // ---- DATOS SIMULADOS (En el futuro vendrán del análisis de la IA) ----
-    const nivelCrediticio = "bueno"; // Puedes cambiar esto a 'bajo', 'medio' o 'bueno' para probar
+
+const ResumenCrediticio = ({ solicitud }) => {
+    const nivelCrediticio = "bueno"; 
     const dataDeudas = [
         { name: 'T. Crédito', monto: 150000 },
         { name: 'P. Personal', monto: 450000 },
         { name: 'Servicios', monto: 25000 },
         { name: 'Otros', monto: 75000 },
     ];
-    // ----------------------------------------------------------------------
-
-    // Solo mostramos el resumen si el informe ha sido enviado
+    
     if (!solicitud || (solicitud.estado !== 'informe_enviado' && solicitud.estado !== 'Completado')) {
         return (
              <div className="bg-gray-800 p-6 rounded-lg text-center">
@@ -87,4 +81,6 @@ export default function ResumenCrediticio({ solicitud }) {
             </div>
         </div>
     );
-}
+};
+
+export default ResumenCrediticio;
