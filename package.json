@@ -13,6 +13,9 @@
     "firebase-admin": "^13.4.0",
     "firebase-storage": "^1.1.4",
     "next": "15.3.3",
+    "openai": "^5.5.0",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^5.3.31",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^2.15.3"

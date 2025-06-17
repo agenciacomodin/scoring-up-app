@@ -1,126 +1,151 @@
-// src/app/admin/page.js
 "use client";
+
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, doc, updateDoc, orderBy } from 'firebase/firestore';
 import { ref, uploadBytes } from "firebase/storage";
 import { db, storage } from '../firebase.js';
 import AdminRoute from '../../components/AdminRoute.js';
+import { OpenAI } from 'openai';
+import * as pdfjsLib from 'pdfjs-dist';
 
-// --- COMPONENTES ---
-const FileUploader = ({ solicitudId }) => { 
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
+
+const openai = new OpenAI({
+    apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true,
+});
+
+const PROMPT_MAGICO = `
+    Eres 'Asesor Scoring UP', un experto analista de informes crediticios Veraz de Argentina, y trabajas para Libertad Crediticia.
+    Tu misión es analizar el informe, detectar los puntos de dolor del usuario y presentar a Libertad Crediticia como la solución experta.
+    Debes responder ÚNICAMENTE con un objeto JSON válido. No añadas texto introductorio ni de cierre.
+    Analiza el siguiente texto extraído de un informe PDF: "{textoDelPDF}"
+    
+    El formato de tu respuesta JSON DEBE SER:
+    {
+      "score": "string",
+      "resumenSituacion": "string",
+      "alertasCriticas": ["string"],
+      "puntosPositivos": "string",
+      "necesitaAyuda": boolean,
+      "tipoDeudaPrincipal": "string"
+    }
+
+    Instrucciones para completar el JSON:
+    - score: Busca el número de Score Veraz y descríbelo. Ejemplo: "1 (Muy Alto Riesgo)". Si no está, pon "No especificado".
+    - resumenSituacion: Escribe un párrafo de 2-3 líneas resumiendo el estado general y el endeudamiento total.
+    - alertasCriticas: Crea un array de strings, donde cada string es un problema grave. Ejemplo: "Deuda con WENANCE S.A. en situación 5 (Irrecuperable).", "Observación de deuda de $37,776.01 con AMX ARGENTINA.".
+    - puntosPositivos: Si no tiene deudas y su situación es normal, menciónalo. Si no, escribe "No se detectaron puntos positivos relevantes.".
+    - necesitaAyuda: Pon 'true' si el score es menor o igual a 4, o si el array 'alertasCriticas' tiene al menos un ítem. De lo contrario, 'false'.
+    - tipoDeudaPrincipal: Clasifica la deuda principal como 'bancaria' (si es de un banco), 'no_bancaria' (servicios, etc), 'prescripta' (si tiene más de 5 años), o 'ninguna'.
+    
+    ¡IMPORTANTE! Tu respuesta final debe ser estrictamente un objeto JSON.
+`;
+
+const FileUploaderAndProcessor = ({ solicitud }) => {
     const [file, setFile] = useState(null);
-    const [uploading, setUploading] = useState(false);
-    const handleFileChange = (e) => { if (e.target.files[0]) { setFile(e.target.files[0]); } };
-    const handleUpload = async () => {
-        if (!file) return;
-        setUploading(true);
-        const storageRef = ref(storage, `informes-pendientes/${solicitudId}.pdf`);
+    const [processing, setProcessing] = useState(false);
+    const [statusMessage, setStatusMessage] = useState("Subir y Analizar");
+
+    const getTextFromPdf = async (fileData) => {
+        const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
+        let text = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            text += content.items.map(item => item.str).join(' ');
+        }
+        return text;
+    };
+
+    const handleProcess = async () => {
+        if (!file) { alert("Por favor, selecciona un PDF."); return; }
+        setProcessing(true);
+        const solicitudRef = doc(db, 'solicitudes', solicitud.id);
+        
         try {
+            setStatusMessage("1/4: Subiendo PDF...");
+            await updateDoc(solicitudRef, { estado: "Subiendo PDF..." });
+            const storageRef = ref(storage, `informes-pendientes/${solicitud.id}.pdf`);
             await uploadBytes(storageRef, file);
-            alert(`PDF subido!`);
-        } catch (e) {
-            alert("Error al subir el PDF.");
-        } finally {
-            setUploading(false);
+
+            setStatusMessage("2/4: Leyendo PDF...");
+            await updateDoc(solicitudRef, { estado: "Leyendo PDF..." });
+            const fileReader = new FileReader();
+            fileReader.readAsArrayBuffer(file);
+
+            fileReader.onload = async (event) => {
+                try {
+                    const pdfData = event.target.result;
+                    const textoDelPDF = await getTextFromPdf(pdfData);
+
+                    setStatusMessage("3/4: Analizando con IA...");
+                    await updateDoc(solicitudRef, { estado: "Analizando con IA..." });
+                    const promptFinal = PROMPT_MAGICO.replace("{textoDelPDF}", textoDelPDF.replace(/"/g, "'").slice(0, 10000));
+                    
+                    const response = await openai.chat.completions.create({
+                        model: "gpt-3.5-turbo",
+                        messages: [{ role: "user", content: promptFinal }],
+                        response_format: { type: "json_object" },
+                    });
+
+                    setStatusMessage("4/4: Guardando...");
+                    const analisisJSON = JSON.parse(response.choices[0].message.content);
+                    await updateDoc(solicitudRef, {
+                        analisisIA: analisisJSON,
+                        estado: 'informe_enviado',
+                    });
+
+                    alert("¡Proceso completado con éxito!");
+
+                } catch (innerError) {
+                     console.error("Error durante el análisis:", innerError);
+                     await updateDoc(solicitudRef, { estado: "Error de Análisis" });
+                     alert("Hubo un error en el análisis, revisa la consola.");
+                } finally {
+                    setProcessing(false);
+                    setStatusMessage("Subir y Analizar");
+                }
+            };
+        } catch (uploadError) {
+            console.error("Error de subida:", uploadError);
+            await updateDoc(solicitudRef, { estado: "Error de Subida" });
+            alert("Hubo un error al subir el archivo.");
+            setProcessing(false);
         }
     };
+
     return (
         <div className="flex items-center gap-2">
-            <input type="file" accept=".pdf" onChange={handleFileChange} className="text-xs" />
-            <button onClick={handleUpload} disabled={uploading || !file} className="bg-blue-600 hover:bg-blue-700 p-2 rounded text-xs disabled:bg-gray-500">{uploading ? '...' : 'Subir'}</button>
+            <input type="file" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} className="text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gray-600 file:text-gray-300 hover:file:bg-gray-500" />
+            <button onClick={handleProcess} disabled={processing || !file} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-3 rounded-md text-xs disabled:bg-gray-500 disabled:cursor-not-allowed">
+                {processing ? statusMessage : 'Subir y Analizar'}
+            </button>
         </div>
     );
 };
 
-// --- DASHBOARD ---
 function DashboardContent() {
     const [solicitudes, setSolicitudes] = useState([]);
-
     useEffect(() => {
         const q = query(collection(db, "solicitudes"), orderBy("fecha", "desc"));
         const unsub = onSnapshot(q, (snapshot) => setSolicitudes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
         return () => unsub();
     }, []);
-
-    const cambiarEstado = async (id, nuevoEstado) => {
-        await updateDoc(doc(db, 'solicitudes', id), { estado: nuevoEstado });
-    };
-
-    // Función para simular el análisis de la IA
-    const analizarConIA = async (solicitudId, email) => {
-        const confirmacion = confirm(`¿Estás seguro de que quieres simular el análisis para ${email}? Esto cambiará el estado a 'informe_enviado'.`);
-        if (!confirmacion) return;
-
-        alert("Iniciando simulación de análisis con IA...");
-        
-        // Texto de ejemplo que la IA generaría
-        const resumenSimulado = `
-**Resumen de Situación (Análisis Simulado):**
-La situación crediticia actual presenta un riesgo moderado. Se observan algunas deudas recientes pero no hay morosidad de alto riesgo.
-
-**Detalles Clave:**
-- **Puntaje (Score):** 750 (Estimado)
-- **Deudas Activas:** Tarjeta Naranja (saldo bajo), Préstamo personal Banco Macro.
-
-**Recomendaciones:**
-1. Mantener los pagos de la tarjeta al día para mejorar el score a corto plazo.
-2. Evitar solicitar nuevos créditos en los próximos 3 meses para no afectar el historial.
-        `.trim();
-        
-        try {
-            const solicitudRef = doc(db, 'solicitudes', solicitudId);
-            await updateDoc(solicitudRef, {
-                resumenIA: resumenSimulado,
-                estado: 'informe_enviado'
-            });
-            alert("¡Análisis simulado completado y guardado para el cliente!");
-        } catch (error) {
-            console.error("Error al simular análisis: ", error);
-            alert("Hubo un error al guardar el análisis simulado.");
-        }
-    };
-
     return (
         <div className="bg-gray-900 text-white min-h-screen p-8">
-            <h1 className="text-3xl font-bold mb-6">Dashboard de Gestión Interna</h1>
-            <a href="/perfil" className="text-green-400 hover:underline mb-6 block">← Volver a mi Perfil de Admin</a>
-            <div className="bg-gray-800 rounded-lg p-4">
+            <h1 className="text-3xl font-bold mb-6">Dashboard de Gestión</h1>
+            <div className="bg-gray-800 rounded-lg p-4 shadow-lg">
                 <h2 className="text-xl font-semibold mb-4">Solicitudes de Clientes</h2>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
-                         <thead className="text-xs text-gray-400 uppercase bg-gray-700">
-                            <tr>
-                                <th className="px-4 py-3">Cliente</th>
-                                <th className="px-4 py-3">DNI</th>
-                                <th className="px-4 py-3">Estado</th>
-                                <th className="px-4 py-3">1. Subir PDF</th>
-                                <th className="px-4 py-3">2. Analizar</th>
-                            </tr>
-                        </thead>
+                        <thead className="text-xs text-gray-400 uppercase bg-gray-700"><tr><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Acción</th></tr></thead>
                         <tbody>
-                            {solicitudes.map(s => (
-                                <tr key={s.id} className="border-b border-gray-700">
-                                    <td className="px-4 py-4 font-medium">{s.email}<br/><span className="text-xs text-gray-400">{s.nombre}</span></td>
-                                    <td className="px-4 py-4">{s.dni}</td>
-                                    <td className="px-4 py-4">
-                                         <select onChange={(e) => cambiarEstado(s.id, e.target.value)} value={s.estado || ''} className="bg-gray-600 p-2 rounded-md">
-                                            <option value="pendiente_pago">Pendiente Pago</option>
-                                            <option value="pago_confirmado">Pago Confirmado</option>
-                                            <option value="informe_enviado">Informe Enviado</option>
-                                            <option value="cancelado">Cancelado</option>
-                                        </select>
-                                    </td>
-                                    <td className="px-4 py-4"><FileUploader solicitudId={s.id} /></td>
-                                    <td className="px-4 py-4">
-                                        <button 
-                                            onClick={() => analizarConIA(s.id, s.email)}
-                                            className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-3 rounded-md"
-                                        >
-                                            IA
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
+                            {solicitudes.map(s => (<tr key={s.id} className="border-b border-gray-700">
+                                <td className="px-4 py-4">{s.email}<br/><span className="text-xs text-gray-400">{s.nombre} - DNI: {s.dni}</span></td>
+                                <td className="px-4 py-4 font-mono">{s.estado}</td>
+                                <td className="px-4 py-4"><FileUploaderAndProcessor solicitud={s} /></td>
+                            </tr>))}
                         </tbody>
                     </table>
                 </div>
